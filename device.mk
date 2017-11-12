@@ -132,7 +132,8 @@ PRODUCT_COPY_FILES += \
     $(DEVICE_PATH)/configs/media_profiles.xml:system/etc/media_profiles.xml	
 
 # USB
-PRODUCT_DEFAULT_PROPERTY_OVERRIDES += persist.sys.usb.config=mtp
+PRODUCT_DEFAULT_PROPERTY_OVERRIDES += \
+    persist.sys.usb.config=mtp
 
 # AAPT
 PRODUCT_AAPT_CONFIG := normal
