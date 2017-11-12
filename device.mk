@@ -118,7 +118,11 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     FMRadio \
     libfmjni
-
+    
+# Substratum
+PRODUCT_PACKAGES += \
+    ThemeInterfacer
+    
 # Media codecs
 PRODUCT_COPY_FILES += \
     $(DEVICE_PATH)/configs/media_codecs.xml:system/etc/media_codecs.xml \
