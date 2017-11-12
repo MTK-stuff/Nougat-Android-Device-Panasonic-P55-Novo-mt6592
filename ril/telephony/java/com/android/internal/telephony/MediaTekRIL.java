@@ -38,8 +38,10 @@ import java.util.ArrayList;
 import java.io.IOException;
 import java.io.InputStream;
 
+import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.UiccController;
+import com.android.internal.telephony.uicc.IccRefreshResponse;
 
 public class MediaTekRIL extends RIL implements CommandsInterface {
 
@@ -198,12 +200,12 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
     int mSimId = 0;
 
 
-    public MediaTekRIL(Context context, int networkMode, int cdmaSubscription) {
-	    super(context, networkMode, cdmaSubscription, null);
+    public MediaTekRIL(Context context, int preferredNetworkType, int cdmaSubscription) {
+	    super(context, preferredNetworkType, cdmaSubscription, null);
     }
 
-    public MediaTekRIL(Context context, int networkMode, int cdmaSubscription, Integer instanceId) {
-	    super(context, networkMode, cdmaSubscription, instanceId);
+    public MediaTekRIL(Context context, int preferredNetworkType, int cdmaSubscription, Integer instanceId) {
+	    super(context, preferredNetworkType, cdmaSubscription, instanceId);
     }
 
     public static byte[] hexStringToBytes(String s) {
@@ -230,18 +232,136 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
          throw new RuntimeException ("invalid hex char '" + c + "'");
     }
 
+    protected Object
+    responseOperatorInfos(Parcel p) {
+        if (mInstanceId == null || mInstanceId == 0) {
+            mSimId = 0;
+        } else {
+            mSimId = mInstanceId;
+        }
+
+        String strings[] = (String [])responseStrings(p);
+        ArrayList<OperatorInfo> ret;
+
+        if (strings.length % 5 != 0) {
+            throw new RuntimeException(
+                "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: invalid response. Got "
+                + strings.length + " strings, expected multible of 5");
+        }
+
+        String lacStr = SystemProperties.get("gsm.cops.lac");
+        boolean lacValid = false;
+        int lacIndex=0;
+
+        Rlog.d(RILJ_LOG_TAG, "lacStr = " + lacStr+" lacStr.length="+lacStr.length()+" strings.length="+strings.length);
+        if((lacStr.length() > 0) && (lacStr.length()%4 == 0) && ((lacStr.length()/4) == (strings.length/5 ))){
+            Rlog.d(RILJ_LOG_TAG, "lacValid set to true");
+            lacValid = true;
+        }
+
+        SystemProperties.set("gsm.cops.lac","");
+
+        ret = new ArrayList<OperatorInfo>(strings.length / 5);
+
+        for (int i = 0 ; i < strings.length ; i += 5) {
+            if((strings[i+0] != null) && (strings[i+0].startsWith("uCs2") == true)) {        
+                riljLog("responseOperatorInfos handling UCS2 format name");
+
+                try {
+                    strings[i+0] = new String(hexStringToBytes(strings[i+0].substring(4)), "UTF-16");
+                } catch(UnsupportedEncodingException ex) {
+                    riljLog("responseOperatorInfos UnsupportedEncodingException");
+                }
+            }
+
+            if ((lacValid == true) && (strings[i] != null)) {
+                UiccController uiccController = UiccController.getInstance();
+                IccRecords iccRecords = uiccController.getIccRecords(mSimId, UiccController.APP_FAM_3GPP);
+                int lacValue = -1;
+                String sEons = null;
+                String lac = lacStr.substring(lacIndex,lacIndex+4);
+                Rlog.d(RILJ_LOG_TAG, "lacIndex="+lacIndex+" lacValue="+lacValue+" lac="+lac+" plmn numeric="+strings[i+2]+" plmn name"+strings[i+0]);
+
+                if(lac != "") {
+                    lacValue = Integer.parseInt(lac, 16);
+                    lacIndex += 4;
+                    if(lacValue != 0xfffe) {
+                        /*sEons = iccRecords.getEonsIfExist(strings[i+2],lacValue,true);
+                        if(sEons != null) {
+                            strings[i] = sEons;           
+                            Rlog.d(RILJ_LOG_TAG, "plmn name update to Eons: "+strings[i]);
+                        }*/
+                    } else {
+                        Rlog.d(RILJ_LOG_TAG, "invalid lac ignored");
+                    }
+                }
+            }
+
+            if (strings[i] != null && (strings[i].equals("") || strings[i].equals(strings[i+2]))) {
+		Operators init = new Operators ();
+		String temp = init.unOptimizedOperatorReplace(strings[i+2]);
+		riljLog("lookup RIL responseOperatorInfos() " + strings[i+2] + " gave " + temp);
+                strings[i] = temp;
+                strings[i+1] = temp;
+            }
+
+            // 1, 2 = 2G
+            // > 2 = 3G
+            String property_name = "gsm.baseband.capability";
+            if(mSimId > 0) {
+                property_name = property_name + (mSimId+1);
+            }
+
+            int basebandCapability = SystemProperties.getInt(property_name, 3);
+            Rlog.d(RILJ_LOG_TAG, "property_name="+property_name+", basebandCapability=" + basebandCapability);
+            if (3 < basebandCapability) {
+                strings[i+0] = strings[i+0].concat(" " + strings[i+4]);
+                strings[i+1] = strings[i+1].concat(" " + strings[i+4]);
+            }
+
+            ret.add(
+                new OperatorInfo(
+                    strings[i+0],
+                    strings[i+1],
+                    strings[i+2],
+                    strings[i+3]));
+        }
+
+        return ret;
+    }
+
     private Object
     responseCrssNotification(Parcel p) {
+        /*SuppCrssNotification notification = new SuppCrssNotification();
+
+        notification.code = p.readInt();
+        notification.type = p.readInt();
+        notification.number = p.readString();
+        notification.alphaid = p.readString();
+        notification.cli_validity = p.readInt();
+
+        return notification;*/
+
         Rlog.e(RILJ_LOG_TAG, "NOT PROCESSING CRSS NOTIFICATION");
         return null;
     }
 
     private Object responseEtwsNotification(Parcel p) {
+        /*EtwsNotification response = new EtwsNotification();
+        
+        response.warningType = p.readInt();
+        response.messageId = p.readInt();
+        response.serialNumber = p.readInt();
+        response.plmnId = p.readString();
+        response.securityInfo = p.readString();
+        
+        return response;*/
         Rlog.e(RILJ_LOG_TAG, "NOT PROCESSING ETWS NOTIFICATION");
 
         return null;
     }
 
+    // all that C&P just for responseOperator overriding?
     @Override
     protected RILRequest
     processSolicited (Parcel p, int type) {
@@ -273,6 +393,11 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
 
             // either command succeeds or command fails but with data payload
             try {switch (rr.mRequest) {
+            /*
+ cat libs/telephony/ril_commands.h \
+ | egrep "^ *{RIL_" \
+ | sed -re 's/\{([^,]+),[^,]+,([^}]+).+/case \1: ret = \2(p); break;/'
+             */
             case RIL_REQUEST_GET_SIM_STATUS: ret =  responseIccCardStatus(p); break;
             case RIL_REQUEST_ENTER_SIM_PIN: ret =  responseInts(p); break;
             case RIL_REQUEST_ENTER_SIM_PUK: ret =  responseInts(p); break;
@@ -294,6 +419,7 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             case RIL_REQUEST_SIGNAL_STRENGTH: ret =  responseSignalStrength(p); break;
             case RIL_REQUEST_VOICE_REGISTRATION_STATE: ret =  responseStrings(p); break;
             case RIL_REQUEST_DATA_REGISTRATION_STATE: ret =  responseStrings(p); break;
+            case RIL_REQUEST_OPERATOR: ret =  responseOperator(p); break;
             case RIL_REQUEST_RADIO_POWER: ret =  responseVoid(p); break;
             case RIL_REQUEST_DTMF: ret =  responseVoid(p); break;
             case RIL_REQUEST_SEND_SMS: ret =  responseSMS(p); break;
@@ -319,6 +445,7 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             case RIL_REQUEST_QUERY_NETWORK_SELECTION_MODE: ret =  responseInts(p); break;
             case RIL_REQUEST_SET_NETWORK_SELECTION_AUTOMATIC: ret =  responseVoid(p); break;
             case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL: ret =  responseVoid(p); break;
+            case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS : ret =  responseOperatorInfos(p); break;
             case RIL_REQUEST_DTMF_START: ret =  responseVoid(p); break;
             case RIL_REQUEST_DTMF_STOP: ret =  responseVoid(p); break;
             case RIL_REQUEST_BASEBAND_VERSION: ret =  responseString(p); break;
@@ -379,7 +506,7 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             case 106: ret = responseStrings(p); break; // RIL_REQUEST_CDMA_PRL_VERSION
             case 107: ret = responseInts(p);  break; // RIL_REQUEST_IMS_REGISTRATION_STATE
             case RIL_REQUEST_VOICE_RADIO_TECH: ret = responseInts(p); break;
-	    case RIL_REQUEST_SET_3G_CAPABILITY: ret =  responseInts(p); break;
+            case RIL_REQUEST_SET_3G_CAPABILITY: ret =  responseInts(p); break;
 
             default:
                 throw new RuntimeException("Unrecognized solicited response: " + rr.mRequest);
@@ -495,6 +622,10 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
                 break;
 
             case RIL_UNSOL_SMS_READY_NOTIFICATION:
+                /*if (mGsmSmsRegistrant != null) {
+                    mGsmSmsRegistrant
+                        .notifyRegistrant();
+                }*/
                 break;
             case RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED:
 		// intercept and send GPRS_TRANSFER_TYPE and GPRS_CONNECT_TYPE to RIL
@@ -522,6 +653,11 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
 	
 	static String
     requestToString(int request) {
+/*
+ cat libs/telephony/ril_commands.h \
+ | egrep "^ *{RIL_" \
+ | sed -re 's/\{RIL_([^,]+),[^,]+,([^}]+).+/case RIL_\1: return "\1";/'
+*/
         switch(request) {
             case RIL_REQUEST_GET_SIM_STATUS: return "GET_SIM_STATUS";
             case RIL_REQUEST_ENTER_SIM_PIN: return "ENTER_SIM_PIN";
@@ -544,6 +680,7 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             case RIL_REQUEST_SIGNAL_STRENGTH: return "SIGNAL_STRENGTH";
             case RIL_REQUEST_VOICE_REGISTRATION_STATE: return "VOICE_REGISTRATION_STATE";
             case RIL_REQUEST_DATA_REGISTRATION_STATE: return "DATA_REGISTRATION_STATE";
+            case RIL_REQUEST_OPERATOR: return "OPERATOR";
             case RIL_REQUEST_RADIO_POWER: return "RADIO_POWER";
             case RIL_REQUEST_DTMF: return "DTMF";
             case RIL_REQUEST_SEND_SMS: return "SEND_SMS";
@@ -649,9 +786,46 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             case RIL_REQUEST_GET_HARDWARE_CONFIG: return "GET_HARDWARE_CONFIG";
             case RIL_REQUEST_SIM_AUTHENTICATION: return "RIL_REQUEST_SIM_AUTHENTICATION";
             case RIL_REQUEST_SHUTDOWN: return "RIL_REQUEST_SHUTDOWN";
-	    case RIL_REQUEST_SET_3G_CAPABILITY: return "RIL_REQUEST_SET_3G_CAPABILITY";
+            case RIL_REQUEST_SET_3G_CAPABILITY: return "RIL_REQUEST_SET_3G_CAPABILITY";
             default: return "<unknown request>";
         }
+    }
+
+    private Object
+    responseOperator(Parcel p) {
+        int num;
+        String response[] = null;
+
+        response = p.readStringArray();
+
+        if (false) {
+            num = p.readInt();
+
+            response = new String[num];
+            for (int i = 0; i < num; i++) {
+                response[i] = p.readString();
+            }
+        }
+
+        if((response[0] != null) && (response[0].startsWith("uCs2") == true))
+        {        
+            riljLog("responseOperator handling UCS2 format name");			        
+            try{	
+                response[0] = new String(hexStringToBytes(response[0].substring(4)),"UTF-16");
+            }catch(UnsupportedEncodingException ex){
+                riljLog("responseOperatorInfos UnsupportedEncodingException");
+            }			
+        }
+		
+        if (response[0] != null && (response[0].equals("") || response[0].equals(response[2]))) {
+	    Operators init = new Operators ();
+	    String temp = init.unOptimizedOperatorReplace(response[2]);
+	    riljLog("lookup RIL responseOperator() " + response[2] + " gave " + temp + " was " + response[0] + "/" + response[1] + " before.");
+	    response[0] = temp;
+	    response[1] = temp;
+        }
+
+        return response;
     }
 
     private
@@ -679,6 +853,19 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
     }
 
     // Override setupDataCall as the MTK RIL needs 8th param CID (hardwired to 1?)
+    @Override
+    protected Object
+    responseSimRefresh(Parcel p) {
+        IccRefreshResponse response = new IccRefreshResponse();
+
+        response.refreshResult = p.readInt();
+        String rawefId = p.readString();
+        response.efId   = rawefId == null ? 0 : Integer.parseInt(rawefId);
+        response.aid = p.readString();
+
+        return response;
+    }
+
     @Override
     public void
     setupDataCall(int radioTechnology, int profile, String apn,
@@ -929,20 +1116,6 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
                 Rlog.i(RILJ_LOG_TAG, "(" + mInstanceId + ") Connected to '"
                         + rilSocket + "' socket");
 
-                /* Compatibility with qcom's DSDS (Dual SIM) stack */
-                if (needsOldRilFeature("qcomdsds")) {
-                    String str = "SUB1";
-                    byte[] data = str.getBytes();
-                    try {
-                        mSocket.getOutputStream().write(data);
-                        Rlog.i(RILJ_LOG_TAG, "Data sent!!");
-                    } catch (IOException ex) {
-                            Rlog.e(RILJ_LOG_TAG, "IOException", ex);
-                    } catch (RuntimeException exc) {
-                        Rlog.e(RILJ_LOG_TAG, "Uncaught exception ", exc);
-                    }
-                }
-
                 int length = 0;
                 try {
                     InputStream is = mSocket.getInputStream();
@@ -1025,7 +1198,7 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             if (RILJ_LOGD) riljLog("Not setting data subscription on same SIM");
 	}
     }
-    
+
     public void setDataAllowed(boolean allowed, Message result) {
         handle3GSwitch();
 
@@ -1036,5 +1209,15 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(allowed ? 1 : 0);
         send(rr);
+    }
+
+	@Override
+    public void iccIOForApp (int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, Message result) {
+        if (command == 0xc0 && p3 == 0) {
+            Rlog.i("MediaTekRIL", "Override the size for the COMMAND_GET_RESPONSE 0 => 15");
+            p3 = 15;
+        }
+        super.iccIOForApp(command, fileid, path, p1, p2, p3, data, pin2, aid, result);
     }
 }
