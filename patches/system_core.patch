@@ -1498,7 +1498,7 @@ index 7a370596e..a027e418f 100755
          { "ro.boot.baseband",   "ro.baseband",   "unknown", },
          { "ro.boot.bootloader", "ro.bootloader", "unknown", },
 -        { "ro.boot.hardware",   "ro.hardware",   "unknown", },
-+        { "ro.boot.hardware",   "ro.hardware",   "mt6582", },
++        { "ro.boot.hardware",   "ro.hardware",   "mt6592", },
  #ifndef IGNORE_RO_BOOT_REVISION
          { "ro.boot.revision",   "ro.revision",   "0", },
  #endif
