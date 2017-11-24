@@ -110,6 +110,10 @@ PRODUCT_COPY_FILES += \
 # Camera app
 PRODUCT_PACKAGES += Snap
 
+ # Charger
+  PRODUCT_PACKAGES += \
+    charger_res_images
+
 # FM Radio app
 PRODUCT_PACKAGES += \
     FMRadio \

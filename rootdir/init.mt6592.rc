@@ -1,14 +1,8 @@
 import init.mt6592.usb.rc
 import init.modem.rc
 
-on charger
-    mount ext4 /emmc@android /system ro wait
-    start drvbd
-    start ipod
-    start servicemanager
-
-    # disable USB
-    write /sys/devices/platform/mt_usb/cmode 0
+ on early-init
+    write /sys/class/leds/lcd-backlight/trigger "backlight"
 
 on init
    # See storage config details at http://source.android.com/tech/storage/
@@ -333,6 +327,11 @@ on post-fs
     chmod 0770 /system/etc/ril
     chmod 0444 /system/etc/ril/oper.lis
     setprop rild.nw.operlist /system/etc/ril/oper.lis
+
+service charger /sbin/healthd -c
+     class charger
+     critical
+     seclabel u:r:healthd:s0
 
 service wmtLoader /system/bin/wmt_loader
     user root
